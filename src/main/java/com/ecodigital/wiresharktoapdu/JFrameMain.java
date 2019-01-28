@@ -6,6 +6,10 @@
 package com.ecodigital.wiresharktoapdu;
 
 
+import com.ecodigital.wiresharktoapdu.apdu.CommandTpdu;
+import com.ecodigital.wiresharktoapdu.apdu.ApduListResponseISO7816;
+import com.ecodigital.wiresharktoapdu.apdu.ApduStatusWord;
+import com.ecodigital.wiresharktoapdu.apdu.ResponseApdu;
 import java.awt.dnd.*;
 import java.awt.datatransfer.*;
 import java.awt.event.ItemEvent;
@@ -13,6 +17,7 @@ import java.awt.event.ItemListener;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
@@ -24,9 +29,12 @@ import javax.swing.text.StyleConstants;
 public class JFrameMain extends javax.swing.JFrame {
 
     
-    private List<byte[]> apdus = new ArrayList<byte[]>();
-    private List<CommandByte> commands = new ArrayList<>();
+    private List<CommandTpdu> tpdus     = new ArrayList<>();
+    private List<CommandTpdu> apdus     = new ArrayList<>();
     
+    private ApduListResponseISO7816 iSO7816 = new ApduListResponseISO7816();
+    
+    private boolean showDocumentation = true;
     /**
      * Creates new form NewJFrame
      */
@@ -42,8 +50,8 @@ public class JFrameMain extends javax.swing.JFrame {
         jTextPane1.setText("");
         jTextPane1.setFont(MyFont.REGULAR.deriveFont(14f));
         jLabel2.setText("");
-        apdus       = new ArrayList<byte[]>();
-        commands    = new ArrayList<>();
+        tpdus       = new ArrayList<>();
+        apdus       = new ArrayList<>();
     }    
     
     private void customUI(){
@@ -57,7 +65,7 @@ public class JFrameMain extends javax.swing.JFrame {
         
         jCheckBox1.addItemListener(new ItemListener() {
             public void itemStateChanged(ItemEvent e) {
-              showData();
+              validateApdu();
             }
         });
     }
@@ -74,10 +82,9 @@ public class JFrameMain extends javax.swing.JFrame {
                 length = data[ i - 4] & 0xFF; // sin signo
                 if(length > index_pad) {
                     byte OUT_IN = data[i+index_OUT_IN];
-                    byte[] tmp = HexUtils.subArray(data, i+index_pad, length-index_pad);
+                    byte[] tmp = Hex.subArray(data, i+index_pad, length-index_pad);
                     if(tmp[0] != (byte) 0x50){ // NO INTERRUPT
-                        apdus.add(tmp);
-                        commands.add(new CommandByte(OUT_IN, tmp));
+                        tpdus.add(new CommandTpdu(OUT_IN, tmp));
                     }
                 }
                 i+=length;
@@ -85,59 +92,48 @@ public class JFrameMain extends javax.swing.JFrame {
                 i++;
             }
         }
-        showData();
-        
+        validateApdu();
     }
     
     
-    private void showData() {
-        boolean onlyApdu = jCheckBox1.isSelected();
-        int head_apdu = 10;
-        StringBuilder stringBuilder = new StringBuilder();
-        if(commands.size()> 0) {
-            for(int i=0; i< commands.size(); i++) {
-                if(onlyApdu) {
-                    if(commands.get(i).getData().length > head_apdu) {
-                        if(commands.get(i).getOut_in() == (byte)0x00) { // OUT
-                            stringBuilder.append("<br/><font color='gray'>----------------------------------------------------------------------------------</font>");
-                            stringBuilder.append("<br/><font color='blue'>"+ HexUtils.hexify(HexUtils.subArray(commands.get(i).getData(),head_apdu, commands.get(i).getData().length-head_apdu) , true) +"</font>");
-                        } else if(commands.get(i).getOut_in() == (byte)0x01) { // IN
-                            stringBuilder.append("<br/><font color='red'>"+ HexUtils.hexify(HexUtils.subArray(commands.get(i).getData(),head_apdu, commands.get(i).getData().length-head_apdu) , true) +"</font>");
-                        }
-                    }
-                } else {
-                    if(commands.get(i).getOut_in() == (byte)0x00) { // OUT
-                        stringBuilder.append("<br/><font color='gray'>----------------------------------------------------------------------------------</font>");
-                        stringBuilder.append("<br/><font color='blue'>"+ HexUtils.hexify(commands.get(i).getData() , true) +"</font>");
-                    } else if(commands.get(i).getOut_in() == (byte)0x01) { // IN
-                        stringBuilder.append("<br/><font color='red'>"+ HexUtils.hexify(commands.get(i).getData() , true) +"</font>");
+    private void validateApdu() {
+        System.out.println("validateApdu()");
+        apdus = new ArrayList<>();
+        if(tpdus.size() > 0){
+            for(int i=0; i < tpdus.size(); i++) {
+                if(tpdus.get(i).isRequest()) {
+                    apdus.add( new CommandTpdu(tpdus.get(i)) );
+                } else if(tpdus.get(i).isResponse()) { 
+                    if( apdus.size() > 0 && apdus.get(apdus.size()-1).isResponse() ) {
+                        ResponseApdu tmp = apdus.get( apdus.size() - 1 ).getResponseApdu();
+                        tmp.appendData(tpdus.get(i).getResponseApdu().getData());
+                        System.out.println( Hex.hexify(tpdus.get(i).getResponseApdu().getData(), true)  );
+                        System.out.println("appendData");
+                        apdus.get( apdus.size() - 1 ).setResponseApdu(tmp);
+                    } else {
+                        apdus.add( new CommandTpdu(tpdus.get(i)) );
                     }
                 }
             }
-        } else {
-            stringBuilder.append("<font color='red'> NO HAY DATOS QUE MOSTRAR</font>");
         }
-        jTextPane1.setText(stringBuilder.toString());
-        jTextPane1.setCaretPosition(0);
+        showData();
     }
     
-    /*
+    
     private void showData() {
         boolean onlyApdu = jCheckBox1.isSelected();
-        int head_apdu = 10;
         StringBuilder stringBuilder = new StringBuilder();
         if(apdus.size()> 0) {
-            for(int i=0; i< apdus.size(); i = i + 2) {
-                if(onlyApdu) {
-                    if(apdus.get(i)[0] == (byte)0x6F) { // si solo es un comando APDU
-                        stringBuilder.append("<font color='blue'>"+ ( ( head_apdu < apdus.get(i).length) ?  HexUtils.hexify(HexUtils.subArray(apdus.get(i),head_apdu, apdus.get(i).length-head_apdu) , true)  : "..." )+"</font>");
-                        stringBuilder.append("<br/><font color='red'>"+ ( ( head_apdu < apdus.get(i+1).length) ?  HexUtils.hexify(HexUtils.subArray(apdus.get(i+1),head_apdu, apdus.get(i+1).length-head_apdu) , true)  : "..." )+"</font>");
-                        stringBuilder.append("<br/><font color='gray'>----------------------------------------------------------------------------------</font><br/>");
+            for(CommandTpdu temp : apdus) {
+                if(temp.isRequest()) { // OUT
+                    stringBuilder.append("<br/><font color='gray'>----------------------------------------------------------------------------------</font>");
+                    stringBuilder.append("<br/><font color='blue'>"+ Hex.hexify( onlyApdu ? temp.getRequestApdu().getAbData() : temp.getRequestApdu().getData() , true) +"</font>");
+                } else if(temp.isResponse()) { // IN
+                    stringBuilder.append("<br/><font color='red'>"+ Hex.hexify( onlyApdu ? temp.getResponseApdu().getAbData() : temp.getResponseApdu().getData() , true) +"</font>");
+                    if(showDocumentation) {
+                        ApduStatusWord statusWord = iSO7816.searchResponse(temp.getResponseApdu().getSW1(), temp.getResponseApdu().getSW2());
+                        stringBuilder.append("<br/><font color='#888888'>"+ statusWord.getDescription() +"</font>");
                     }
-                } else {
-                    stringBuilder.append("<font color='blue'>"+ HexUtils.hexify(apdus.get(i), true) +"</font>");
-                    stringBuilder.append("<br/><font color='red'>"+ HexUtils.hexify(apdus.get(i+1), true) +"</font>");
-                    stringBuilder.append("<br/><font color='gray'>----------------------------------------------------------------------------------</font><br/>");
                 }
             }
         } else {
@@ -146,7 +142,6 @@ public class JFrameMain extends javax.swing.JFrame {
         jTextPane1.setText(stringBuilder.toString());
         jTextPane1.setCaretPosition(0);
     }
-    */
     
     
     int fila = 1;
